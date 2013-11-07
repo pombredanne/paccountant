@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 )
 
@@ -20,30 +19,39 @@ func check(err error) {
 }
 
 func serveOne(conn net.Conn, data chan<- []byte) {
+	// Ensure that ``conn`` is closed on matter how we exit serveOne()
+	defer func() {
+		err := conn.Close()
+		check(err)
+	}()
+
 	b := make([]byte, 32)
 	n, err := conn.Read(b)
 	check(err)
 
 	s := string(b[:n-1])
 	log.Printf("Connection from %q", s)
-	pid, err := strconv.ParseUint(s, 10, 64)
+
+	var pid uint64
+	var status int
+
+	_, err = fmt.Sscanln(s, &pid, &status)
 	check(err)
 
 	proc := fmt.Sprintf("/proc/%v/", pid)
 
-	io_content, err := ioutil.ReadFile(proc + "/io")
+	io_content, err := ioutil.ReadFile(proc + "io")
 	check(err)
 
-	status_content, err := ioutil.ReadFile(proc + "/status")
+	status_content, err := ioutil.ReadFile(proc + "status")
 	check(err)
 
-	cmdline, err := ioutil.ReadFile(proc + "/cmdline")
+	cmdline, err := ioutil.ReadFile(proc + "cmdline")
 	check(err)
 
-	err = conn.Close()
-	check(err)
-
-	data <- append(status_content, append(io_content, cmdline...)...)
+	go func() {
+		data <- append(status_content, append(io_content, cmdline...)...)
+	}()
 }
 
 func writelog(data <-chan []byte, done <-chan struct{}) {
@@ -83,7 +91,7 @@ func main() {
 	check(err)
 	defer listener.Close()
 
-	log := make(chan []byte)
+	logChan := make(chan []byte)
 	done := make(chan struct{})
 
 	var wg sync.WaitGroup
@@ -92,7 +100,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		writelog(log, done)
+		writelog(logChan, done)
 	}()
 
 	go func() {
@@ -100,7 +108,14 @@ func main() {
 			conn, err := listener.Accept()
 			check(err)
 
-			go serveOne(conn, log)
+			go func() {
+				defer func() {
+					if err := recover(); err != nil {
+						log.Printf("serveOne failed %v", err)
+					}
+				}()
+				serveOne(conn, logChan)
+			}()
 		}
 	}()
 
