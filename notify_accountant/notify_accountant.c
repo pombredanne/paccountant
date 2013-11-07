@@ -43,6 +43,4 @@ void notify_paccountant(void) {
     // Wait for the server to signal to us we can go away.
     char buf[1];
     read(fd, buf, 1);
-
-    asm volatile ("int3;");
 }
