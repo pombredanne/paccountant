@@ -32,19 +32,18 @@ func serveOne(conn net.Conn, data chan<- []byte) {
 	proc := fmt.Sprintf("/proc/%v/", pid)
 
 	io_content, err := ioutil.ReadFile(proc + "/io")
-	if err != nil {
-		panic(err)
-	}
+	check(err)
 
 	status_content, err := ioutil.ReadFile(proc + "/status")
-	if err != nil {
-		panic(err)
-	}
+	check(err)
+
+	cmdline, err := ioutil.ReadFile(proc + "/cmdline")
+	check(err)
 
 	err = conn.Close()
 	check(err)
 
-	data <- append(status_content, io_content...)
+	data <- append(status_content, append(io_content, cmdline...)...)
 }
 
 func writelog(data <-chan []byte, done <-chan struct{}) {
