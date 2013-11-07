@@ -1,6 +1,8 @@
 #include <arpa/inet.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -9,10 +11,17 @@
 // GCC will accept.
 #define DESTRUCTOR_PRIORITY 0xFFFF
 
+const long half_second = 1000000L / 2;
+
 __attribute__((destructor (DESTRUCTOR_PRIORITY)))
 void notify_paccountant(void) {
-    // TODO(pwaller): If our resource suage is below some trivial amount,
-    //                don't even bother notifying?
+
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) == 0) {
+        if (ru.ru_utime.tv_sec < 1 && ru.ru_utime.tv_usec < half_second) {
+            return;
+        }
+    }
 
     struct sockaddr server;
     struct sockaddr_in *in_server = (struct sockaddr_in*)&server;
