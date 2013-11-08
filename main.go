@@ -129,7 +129,6 @@ func serveOne(conn net.Conn, data chan<- Process) {
 }
 
 func writelog(data <-chan Process, done <-chan struct{}, hup <-chan os.Signal) {
-	defer println("Written log")
 
 	filename := "paccountant.log"
 
@@ -137,6 +136,8 @@ func writelog(data <-chan Process, done <-chan struct{}, hup <-chan os.Signal) {
 	fd, err := os.OpenFile(filename, flags, 0666)
 	check(err)
 
+	defer log.Println("Done")
+	// Inside func(){} To ensure ``fd`` is bound correctly after SIGHUP
 	defer func() { fd.Close() }()
 
 	buf := &bytes.Buffer{}
@@ -152,7 +153,6 @@ func writelog(data <-chan Process, done <-chan struct{}, hup <-chan os.Signal) {
 			continue
 
 		case <-done:
-			log.Println("Recv <-done")
 			return
 
 		case datum := <-data:
@@ -165,8 +165,10 @@ func writelog(data <-chan Process, done <-chan struct{}, hup <-chan os.Signal) {
 			buf.WriteByte('\n')
 
 			if n != len(bytes) {
-				check(fmt.Errorf("Unexpected number of bytes to buffer.. %v != %v",
-					n, len(bytes)))
+				err = fmt.Errorf(
+					"Unexpected number of bytes to buffer.. %v != %v",
+					n, len(bytes))
+				check(err)
 			}
 
 			_, err = io.Copy(fd, buf)
@@ -229,6 +231,8 @@ func main() {
 	s := make(chan os.Signal)
 	signal.Notify(s, os.Interrupt)
 	<-s
+
+	log.Println("Interrupted")
 
 	close(done)
 }
