@@ -13,15 +13,19 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 type Process struct {
 	Cmdline, Pwd, Exe string
 	Status            int
 	Uid               int64
-	Memory            struct {
+	When              time.Time
+
+	Memory struct {
 		Maxrss uint32
 	}
+
 	Io struct {
 		Nreads, Nwrites uint64
 		Byter, Bytew    uint64
@@ -41,7 +45,9 @@ func makeDict(input string) map[string]string {
 	return result
 }
 
-func NewProcess(status int, cmdline, pwd, exe, io, stat string) Process {
+func NewProcess(when time.Time, status int, cmdline, pwd, exe, io,
+	stat string) Process {
+
 	iodict := makeDict(io)
 	statdict := makeDict(stat)
 
@@ -50,6 +56,7 @@ func NewProcess(status int, cmdline, pwd, exe, io, stat string) Process {
 		Status:  status,
 		Pwd:     pwd,
 		Exe:     exe,
+		When:    when,
 	}
 
 	fmt.Sscan(statdict["Uid"], &process.Uid)
@@ -73,6 +80,9 @@ func check(err error) {
 }
 
 func serveOne(conn net.Conn, data chan<- Process) {
+
+	when := time.Now()
+
 	// Ensure that ``conn`` is closed on matter how we exit serveOne()
 	exit := func() {
 		// log.Println("Done")
@@ -112,7 +122,7 @@ func serveOne(conn net.Conn, data chan<- Process) {
 	check(err)
 
 	go func() {
-		data <- NewProcess(status, string(cmdline_content), pwd, exe,
+		data <- NewProcess(when, status, string(cmdline_content), pwd, exe,
 			string(io_content), string(status_content))
 	}()
 }
