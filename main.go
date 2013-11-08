@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -16,6 +17,8 @@ import (
 	"syscall"
 	"time"
 )
+
+var log_filename = flag.String("output", "paccountant.log", "Log filename")
 
 type Process struct {
 	Cmdline, Pwd, Exe string
@@ -130,10 +133,8 @@ func serveOne(conn net.Conn, data chan<- Process) {
 
 func writelog(data <-chan Process, done <-chan struct{}, hup <-chan os.Signal) {
 
-	filename := "paccountant.log"
-
 	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
-	fd, err := os.OpenFile(filename, flags, 0666)
+	fd, err := os.OpenFile(*log_filename, flags, 0666)
 	check(err)
 
 	defer log.Println("Done")
@@ -148,7 +149,7 @@ func writelog(data <-chan Process, done <-chan struct{}, hup <-chan os.Signal) {
 			log.Println("SIGHUP")
 			err = fd.Close()
 			check(err)
-			fd, err = os.OpenFile(filename, flags, 0666)
+			fd, err = os.OpenFile(log_filename, flags, 0666)
 			check(err)
 			continue
 
