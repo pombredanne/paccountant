@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -194,17 +195,32 @@ func main() {
 		writelog(logChan, done, hup)
 	}()
 
+	nConnections := int32(0)
+	const MAX_OUTSTANDING = 5
+
 	go func() {
 		for {
 			conn, err := listener.Accept()
 			check(err)
 
+			if atomic.LoadInt32(&nConnections) > MAX_OUTSTANDING {
+				// Last ditch saftey to prevent holding too many inbound
+				// connections simultaneously.
+				conn.Close()
+				log.Print("Last chance safety was hit nmax=%v", MAX_OUTSTANDING)
+				continue
+			}
+
+			atomic.AddInt32(&nConnections, 1)
 			go func() {
+				defer atomic.AddInt32(&nConnections, -1)
+
 				defer func() {
 					if err := recover(); err != nil {
 						log.Printf("serveOne failed %v", err)
 					}
 				}()
+
 				serveOne(conn, logChan)
 			}()
 		}
