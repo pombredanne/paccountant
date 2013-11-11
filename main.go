@@ -149,7 +149,7 @@ func writelog(data <-chan Process, done <-chan struct{}, hup <-chan os.Signal) {
 			log.Println("SIGHUP")
 			err = fd.Close()
 			check(err)
-			fd, err = os.OpenFile(log_filename, flags, 0666)
+			fd, err = os.OpenFile(*log_filename, flags, 0666)
 			check(err)
 			continue
 
@@ -179,9 +179,17 @@ func writelog(data <-chan Process, done <-chan struct{}, hup <-chan os.Signal) {
 }
 
 func main() {
+
+	// TODO(pwaller): if GOMAXPROCS isn't specified in the environment, switch
+	// it to at least 2.
+
 	listener, err := net.Listen("tcp4", "localhost:7117")
 	check(err)
 	defer listener.Close()
+
+	if os.Getuid() != 0 {
+		log.Println("Not running as root. Some processes may be invisible.")
+	}
 
 	logChan := make(chan Process)
 	done := make(chan struct{})
