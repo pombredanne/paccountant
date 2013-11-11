@@ -11,30 +11,37 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"os/user"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/scraperwiki/paccountant/proc"
+	"github.com/scraperwiki/paccountant/ticks"
 )
 
 var log_filename = flag.String("output", "paccountant.log", "Log filename")
 
 type Process struct {
 	Cmdline, Pwd, Exe string
-	Status            int
 	Uid               int64
-	When              time.Time
+	Username          string
+	ExitCode          int
+
+	// Note StartTime will always be an estimate since it is measured in
+	// "Jiffies since boot"
+	StartTime, EndTime time.Time
+
+	// Amount of time spent waiting on Block I/O (measured from ticks)
+	BlockIOWait time.Duration
 
 	Memory struct {
 		Maxrss uint32
 	}
 
-	Io struct {
-		Nreads, Nwrites uint64
-		Byter, Bytew    uint64
-		Blockr, Blockw  uint64 // To block devices
-	}
+	IO *proc.ProcIO
 }
 
 func makeDict(input string) map[string]string {
@@ -49,30 +56,49 @@ func makeDict(input string) map[string]string {
 	return result
 }
 
-func NewProcess(when time.Time, status int, cmdline, pwd, exe, io,
-	stat string) Process {
+func ticksToDuration() {
+	// DelayacctBlkioTicks uint64 // Duration spent waiting on Block IO
 
-	iodict := makeDict(io)
-	statdict := makeDict(stat)
+}
+
+func NewProcess(start, end time.Time, exit_code int, cmdline, pwd, exe,
+	status, stat, io string) Process {
+
+	parsedIo, err := proc.ParseIO(io)
+	check(err)
+
+	parsedStat, err := proc.ParseStat(stat)
+	check(err)
+
+	statusdict := makeDict(status)
 
 	process := Process{
-		Cmdline: cmdline,
-		Status:  status,
-		Pwd:     pwd,
-		Exe:     exe,
-		When:    when,
+		Cmdline:  cmdline,
+		ExitCode: exit_code,
+		Pwd:      pwd,
+		Exe:      exe,
+
+		StartTime: start,
+		EndTime:   end,
+
+		IO: parsedIo,
+
+		BlockIOWait: ticks.TicksToDuration(int64(parsedStat.DelayacctBlkioTicks)),
 	}
 
-	fmt.Sscan(statdict["Uid"], &process.Uid)
+	// Note: UID is "N\tN\tN\tN" and only the first one is used here.
+	fmt.Sscan(statusdict["Uid"], &process.Uid)
+	user, err := user.LookupId(fmt.Sprintf("%v", process.Uid))
+	if err == nil {
+		process.Username = user.Username
+	} else {
+		process.Username = "<unknown>"
+		check(err) // TODO(pwaller): Don't abort on this one
+	}
 
-	fmt.Sscan(statdict["VmHWM"], &process.Memory.Maxrss)
+	fmt.Sscan(statusdict["VmHWM"], &process.Memory.Maxrss)
 
-	fmt.Sscan(iodict["rchar"], &process.Io.Byter)
-	fmt.Sscan(iodict["wchar"], &process.Io.Bytew)
-	fmt.Sscan(iodict["read_bytes"], &process.Io.Blockr)
-	fmt.Sscan(iodict["write_bytes"], &process.Io.Blockw)
-	fmt.Sscan(iodict["syscr"], &process.Io.Nreads)
-	fmt.Sscan(iodict["syscw"], &process.Io.Nwrites)
+
 
 	return process
 }
@@ -85,7 +111,7 @@ func check(err error) {
 
 func serveOne(conn net.Conn, data chan<- Process) {
 
-	when := time.Now()
+	end_time := time.Now()
 
 	// Ensure that ``conn`` is closed on matter how we exit serveOne()
 	exit := func() {
@@ -111,23 +137,37 @@ func serveOne(conn net.Conn, data chan<- Process) {
 
 	proc := fmt.Sprintf("/proc/%v/", pid)
 
-	io_content, err := ioutil.ReadFile(proc + "io")
+	// TODO(pwaller): This start time isn't correct, :(. Need to compute it
+	// from /stat.
+	stat, err := os.Stat(proc)
+	st := stat.Sys().(*syscall.Stat_t)
+	start_time := time.Unix(st.Ctim.Unix())
+	// log.Printf("%#+v", stat)
+	// start_time := stat.ModTime()
+
+	pwd, err := os.Readlink(proc + "cwd")
 	check(err)
 
-	status_content, err := ioutil.ReadFile(proc + "status")
+	exe, err := os.Readlink(proc + "exe")
 	check(err)
 
 	cmdline_content, err := ioutil.ReadFile(proc + "cmdline")
 	check(err)
 
-	pwd, err := os.Readlink(proc + "cwd")
+	stat_content, err := ioutil.ReadFile(proc + "stat")
 	check(err)
-	exe, err := os.Readlink(proc + "exe")
+
+	status_content, err := ioutil.ReadFile(proc + "status")
+	check(err)
+
+	io_content, err := ioutil.ReadFile(proc + "io")
 	check(err)
 
 	go func() {
-		data <- NewProcess(when, status, string(cmdline_content), pwd, exe,
-			string(io_content), string(status_content))
+		data <- NewProcess(
+			start_time, end_time, status,
+			string(cmdline_content), pwd, exe,
+			string(status_content), string(stat_content), string(io_content))
 	}()
 }
 
