@@ -13,13 +13,14 @@
 #define DESTRUCTOR_PRIORITY 0xFFFF
 
 const long half_second = 1000000L / 2;
+const long hundred_millis = 1000000 / 10;
 
 
 void notify_paccountant(int status, void* arg) {
 
     struct rusage ru;
     if (getrusage(RUSAGE_SELF, &ru) == 0) {
-        if (ru.ru_utime.tv_sec < 1 && ru.ru_utime.tv_usec < half_second) {
+        if (ru.ru_utime.tv_sec < 1 && ru.ru_utime.tv_usec < hundred_millis) {
             return;
         }
     }
