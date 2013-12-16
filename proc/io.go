@@ -74,10 +74,15 @@ func ParseIO(io string) (*ProcIO, error) {
 
 	var ioRaw = strings.Split(io, "\n")
 	ioRaw = ioRaw[:len(ioRaw)-1]
+
 	var r = make([]int64, len(ioRaw))
 
 	for i, _ := range r {
-		r[i], _ = strconv.ParseInt(ioRaw[i][strings.Index(ioRaw[i], " "):], 10, 32)
+		var err error
+		r[i], err = strconv.ParseInt(ioRaw[i][strings.Index(ioRaw[i], " ")+1:], 10, 32)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	pIO.Rchar = r[0]

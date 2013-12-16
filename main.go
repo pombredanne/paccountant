@@ -32,10 +32,11 @@ type Process struct {
 
 	// Note StartTime will always be an estimate since it is measured in
 	// "Jiffies since boot"
-	StartTime, EndTime time.Time
+	StartTime, EndTime            time.Time
+	RunTime, UserTime, SystemTime float64
 
 	// Amount of time spent waiting on Block I/O (measured from ticks)
-	BlockIOWait time.Duration
+	BlockIOWait float64
 
 	Memory struct {
 		Maxrss uint32
@@ -56,12 +57,7 @@ func makeDict(input string) map[string]string {
 	return result
 }
 
-func ticksToDuration() {
-	// DelayacctBlkioTicks uint64 // Duration spent waiting on Block IO
-
-}
-
-func NewProcess(start, end time.Time, exit_code int, cmdline, pwd, exe,
+func NewProcess(exit_code int, end_time time.Time, cmdline, pwd, exe,
 	status, stat, io string) Process {
 
 	parsedIo, err := proc.ParseIO(io)
@@ -72,18 +68,27 @@ func NewProcess(start, end time.Time, exit_code int, cmdline, pwd, exe,
 
 	statusdict := makeDict(status)
 
+	runtime := ticks.TicksSinceBootAsDuration(int64(parsedStat.Starttime))
+
+	utime := ticks.TicksToDuration(int64(parsedStat.Utime)).Seconds()
+	stime := ticks.TicksToDuration(int64(parsedStat.Stime)).Seconds()
+
 	process := Process{
 		Cmdline:  cmdline,
 		ExitCode: exit_code,
 		Pwd:      pwd,
 		Exe:      exe,
 
-		StartTime: start,
-		EndTime:   end,
+		StartTime: end_time.Add(-runtime),
+		EndTime:   end_time,
+		RunTime:   runtime.Seconds(),
+
+		UserTime:   utime,
+		SystemTime: stime,
 
 		IO: parsedIo,
 
-		BlockIOWait: ticks.TicksToDuration(int64(parsedStat.DelayacctBlkioTicks)),
+		BlockIOWait: ticks.TicksToDuration(int64(parsedStat.DelayacctBlkioTicks)).Seconds(),
 	}
 
 	// Note: UID is "N\tN\tN\tN" and only the first one is used here.
@@ -98,8 +103,6 @@ func NewProcess(start, end time.Time, exit_code int, cmdline, pwd, exe,
 
 	fmt.Sscan(statusdict["VmHWM"], &process.Memory.Maxrss)
 
-
-
 	return process
 }
 
@@ -111,7 +114,7 @@ func check(err error) {
 
 func serveOne(conn net.Conn, data chan<- Process) {
 
-	end_time := time.Now()
+	end_time := time.Now() // Best guess
 
 	// Ensure that ``conn`` is closed on matter how we exit serveOne()
 	exit := func() {
@@ -137,14 +140,6 @@ func serveOne(conn net.Conn, data chan<- Process) {
 
 	proc := fmt.Sprintf("/proc/%v/", pid)
 
-	// TODO(pwaller): This start time isn't correct, :(. Need to compute it
-	// from /stat.
-	stat, err := os.Stat(proc)
-	st := stat.Sys().(*syscall.Stat_t)
-	start_time := time.Unix(st.Ctim.Unix())
-	// log.Printf("%#+v", stat)
-	// start_time := stat.ModTime()
-
 	pwd, err := os.Readlink(proc + "cwd")
 	check(err)
 
@@ -165,7 +160,7 @@ func serveOne(conn net.Conn, data chan<- Process) {
 
 	go func() {
 		data <- NewProcess(
-			start_time, end_time, status,
+			status, end_time,
 			string(cmdline_content), pwd, exe,
 			string(status_content), string(stat_content), string(io_content))
 	}()
